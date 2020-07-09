@@ -3,7 +3,7 @@ go get github.com/weiwenwang/reactor-sdk-go
 
 ### example
 
-```
+```goland
 func main() {
 	consumer, _ := reactor.NewBatchConsumerWithBatchSize("1109861474", "955e76838210f9427acc6a4bc88b1a22", 10, "https://reactor-test.xingye.work/")
 	r := reactor.New(consumer)
