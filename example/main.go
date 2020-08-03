@@ -46,7 +46,7 @@ func main() {
 	}
 
 	for i := 0; i < 10000; i++ {
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 		err := r.EventAdd(&reactor.Event{UserId: "123", EventId: "wang_test"})
 		if err != nil {
 			log.Println("event add:", err.Error())
@@ -63,6 +63,7 @@ func main() {
 		}
 	}
 	r.Flush() // 这个是把当前的数据全部都发送
-	r.Close() // close里面会调用一次flush, 您可以不需要单独调用flush
 
+	// 在close之前请
+	r.Close() // close里面会调用一次flush, 您可以不需要单独调用flush
 }

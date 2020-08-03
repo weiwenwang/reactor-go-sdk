@@ -12,9 +12,35 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
+
+const (
+	DEFAULT_TIME_OUT             = 3000  // 默认超时时长 3 秒
+	MAX_BATCH_SIZE               = 30    // 最大批量发送条数
+	BATCH_CHANNEL_SIZE           = 2000  // 数据缓冲区大小, 超过此值时会阻塞
+	BATCH_CHANNEL_THRESHOLD_SIZE = 1000  // 超过这个阈值, 内存的数据就丢弃掉, 防止内存过大影响主业务
+	DEFAULT_COMPRESS             = false //默认关闭压缩gzip
+	TIKER_TIME                   = 10
+	ERR_CHANNEL_SIZE             = 2000 // 数据缓冲区大小, 超过此值时会阻塞
+	ERR_CHANNEL_THRESHOLD_SIZE   = 1000 // 超过这个阈值, 内存的数据就丢弃掉, 防止内存过大影响主业务
+)
+const (
+	ENV_TEST ENV = 0
+	ENV_PROD ENV = 1
+)
+
+type ENV int32
+
+type Conf struct {
+	Test_url   string // sdk是公开的, 这个地址还是开发者自己输入比较好
+	Prod_url   string
+	App_id     string
+	Secret_id  string
+	Batch_size int // 每一次请求带过去多少条数据
+}
 
 type BatchConsumer struct {
 	serverUrl   string            // 接收端地址
@@ -36,76 +62,6 @@ type Msg struct {
 	Content []byte
 	Path    string
 }
-
-func (c *BatchConsumer) PreSendMsg(msg *Msg) {
-	if len(c.msg_chan) > ERR_CHANNEL_THRESHOLD_SIZE {
-		for i := 0; i < len(c.msg_chan)-ERR_CHANNEL_THRESHOLD_SIZE; i++ {
-			<-c.msg_chan
-		}
-	}
-	c.msg_chan <- msg
-}
-
-func (c *BatchConsumer) SendMsg() {
-	for {
-		rec, ok := <-c.msg_chan
-		if ok {
-			err := c.send(rec.Path, string(rec.Content))
-			if err != nil {
-				c.re_msg_chan <- rec
-			}
-		}
-	}
-}
-
-func (c *BatchConsumer) ReSendMsg() {
-	// 超过这个值就丢弃
-	for {
-		rec, ok := <-c.re_msg_chan
-		if ok {
-			err := c.send(rec.Path, string(rec.Content))
-			if err != nil {
-				c.err_chan <- err.Error() + "_content: " + string(rec.Content)
-			}
-		}
-	}
-}
-
-func (c *BatchConsumer) ReceiveErrMsg(msg string) {
-	// 超过这个值就丢弃
-	if len(c.err_chan) > ERR_CHANNEL_THRESHOLD_SIZE {
-		for i := 0; i < len(c.err_chan)-ERR_CHANNEL_THRESHOLD_SIZE; i++ {
-			<-c.err_chan
-		}
-	}
-	c.err_chan <- msg
-}
-
-const (
-	DEFAULT_TIME_OUT             = 3000  // 默认超时时长 3 秒
-	MAX_BATCH_SIZE               = 30    // 最大批量发送条数
-	BATCH_CHANNEL_SIZE           = 2000  // 数据缓冲区大小, 超过此值时会阻塞
-	BATCH_CHANNEL_THRESHOLD_SIZE = 1000  // 超过这个阈值, 内存的数据就丢弃掉, 防止内存过大影响主业务
-	DEFAULT_COMPRESS             = false //默认关闭压缩gzip
-	TIKER_TIME                   = 10
-	ERR_CHANNEL_SIZE             = 2000 // 数据缓冲区大小, 超过此值时会阻塞
-	ERR_CHANNEL_THRESHOLD_SIZE   = 1000 // 超过这个阈值, 内存的数据就丢弃掉, 防止内存过大影响主业务
-)
-
-type Conf struct {
-	Test_url   string // sdk是公开的, 这个地址还是开发者自己输入比较好
-	Prod_url   string
-	App_id     string
-	Secret_id  string
-	Batch_size int // 每一次请求带过去多少条数据
-}
-
-type ENV int32
-
-const (
-	ENV_TEST ENV = 0
-	ENV_PROD ENV = 1
-)
 
 func NewBatchConsumerWithBatchSize(conf *Conf, env ENV) (Consumer, chan string, error) {
 	var url string
@@ -146,77 +102,80 @@ func initBatchConsumer(serverUrl string, conf *Conf, timeout int, compress bool)
 		re_msg_chan: make(chan *Msg, BATCH_CHANNEL_SIZE),
 	}
 
-	//event_ch    chan *Event_Plus  // 数据传输信道
-	//login_ch    chan *Login_Plus  // 数据传输信道
-	//battle_ch   chan *Battle_Plus // 数据传输信道
-	//is_flush    chan struct{}
-	//wg          sync.WaitGroup
-	//err_chan    chan string
-	//msg_chan    chan *Msg // 发送消息队列
-	//re_msg_chan chan *Msg // 再次尝试的队列
-
 	c.wg.Add(3)
-
 	go c.SendMsg()
 	go c.ReSendMsg()
 	go DealMsg(c, conf.Batch_size)
 	return c, err_chan, nil
 }
 
-func DealEvent(c *BatchConsumer, batchSize int, path string) {
+func (c *BatchConsumer) PreSendMsg(msg *Msg) {
+	if len(c.msg_chan) > ERR_CHANNEL_THRESHOLD_SIZE {
+		count := 0
+		for i := 0; i < len(c.msg_chan)-ERR_CHANNEL_THRESHOLD_SIZE; i++ {
+			count++
+			<-c.msg_chan
+		}
+		c.err_chan <- "丢掉" + strconv.Itoa(count)
+	}
+	c.msg_chan <- msg
+}
+
+func (c *BatchConsumer) SendMsg() {
 	defer func() {
 		fmt.Println("event deal done")
 		c.wg.Done()
 	}()
-	buffer := make([]*Event_Plus, 0, batchSize)
-	tiker := time.NewTicker(time.Second * time.Duration(TIKER_TIME))
-	is_stop := false // 是否停止
-	for {
-		flush := false // 是否发送
-		select {
-		case rec, ok := <-c.event_ch:
-			c.ReceiveErrMsg("Event get on msg")
-			// 关闭了
-			if !ok {
-				flush = true
-				is_stop = true
-				break
-			}
-			buffer = append(buffer, rec)
-			if len(buffer) > batchSize {
-				flush = true
-			}
-			// 超过阈值的时候, 丢掉老数据
-			if len(buffer) > BATCH_CHANNEL_THRESHOLD_SIZE {
-				for i := 0; i < len(buffer)-BATCH_CHANNEL_THRESHOLD_SIZE; i++ {
-					c.ReceiveErrMsg(fmt.Sprintf("超过阈值, 丢掉了[%d]条数据", len(buffer)-BATCH_CHANNEL_THRESHOLD_SIZE))
-					<-c.event_ch
-				}
-			}
-		case <-tiker.C:
-			flush = true
+	mp := make(map[string]int)
+	mp["statistic/event"] = 0
+	mp["statistic/login"] = 0
+	mp["statistic/battle"] = 0
 
-		case <-c.is_flush:
-			flush = true
-		}
-		// 上传数据到服务端, 不会重试
-		if flush {
-			if len(buffer) > 0 { // 有数据才发送
-				jdata, err := json.Marshal(buffer)
-				if err == nil {
-					err = c.send(path, string(jdata))
-					if err != nil {
-						fmt.Println(err)
-					}
-				}
-				buffer = buffer[:0]
-				flush = false
+	for {
+		rec, ok := <-c.msg_chan
+		if ok == true {
+			err := c.send(rec.Path, string(rec.Content))
+
+			mp[rec.Path]++
+			if mp[rec.Path]%100 == 0 {
+				c.err_chan <- "发送了" + rec.Path + " " + strconv.Itoa(mp[rec.Path])
 			}
-		}
-		if is_stop == true {
+			if err != nil {
+				c.re_msg_chan <- rec
+			}
+		} else {
+			close(c.re_msg_chan)
 			break
 		}
 	}
+}
+
+func (c *BatchConsumer) ReSendMsg() {
+	defer func() {
+		fmt.Println("event deal done")
+		c.wg.Done()
+	}()
+	for {
+		rec, ok := <-c.re_msg_chan
+		if ok == true {
+			err := c.send(rec.Path, string(rec.Content))
+			if err != nil {
+				c.err_chan <- err.Error() + "_content: " + string(rec.Content)
+			}
+		} else {
+			break
+		}
+	}
+}
+
+func (c *BatchConsumer) ReceiveErrMsg(msg string) {
+	// 超过这个值就丢弃
+	if len(c.err_chan) > ERR_CHANNEL_THRESHOLD_SIZE {
+		for i := 0; i < len(c.err_chan)-ERR_CHANNEL_THRESHOLD_SIZE; i++ {
+			<-c.err_chan
+		}
+	}
+	c.err_chan <- msg
 }
 
 func DealMsg(c *BatchConsumer, batchSize int) {
@@ -224,42 +183,39 @@ func DealMsg(c *BatchConsumer, batchSize int) {
 		fmt.Println("event deal done")
 		c.wg.Done()
 	}()
-	buffer_event := make([]*Event_Plus, 0, batchSize)
-	buffer_login := make([]*Login_Plus, 0, batchSize)
-	buffer_battle := make([]*Battle_Plus, 0, batchSize)
+	buffer_event := make([]*Event_Plus, 0, batchSize+10)
+	buffer_login := make([]*Login_Plus, 0, batchSize+10)
+	buffer_battle := make([]*Battle_Plus, 0, batchSize+10)
 	tiker := time.NewTicker(time.Second * time.Duration(TIKER_TIME))
-	is_stop := false // 是否停止
+Loop:
 	for {
 		flush_event := false  // 是否发送
 		flush_login := false  // 是否发送
 		flush_battle := false // 是否发送
 		select {
 		case rec, ok := <-c.event_ch:
-			c.ReceiveErrMsg("Event get on msg")
 			// 关闭了
-			if !ok {
+			if ok == false {
+				fmt.Println("event 已经关闭了")
 				flush_event = true
-				is_stop = true
-				break
+				break Loop
 			}
 			buffer_event = append(buffer_event, rec)
 		case rec, ok := <-c.login_ch:
-			c.ReceiveErrMsg("login get on msg")
 			// 关闭了
-			if !ok {
+			if ok == false {
+				fmt.Println("login 已经关闭了")
 				flush_login = true
-				is_stop = true
-				break
+				break Loop
 			}
 			buffer_login = append(buffer_login, rec)
 
 		case rec, ok := <-c.battle_ch:
-			c.ReceiveErrMsg("battle get on msg")
 			// 关闭了
-			if !ok {
+			if ok == false {
+				fmt.Println("battle 已经关闭了")
 				flush_battle = true
-				is_stop = true
-				break
+				break Loop
 			}
 			buffer_battle = append(buffer_battle, rec)
 
@@ -269,6 +225,7 @@ func DealMsg(c *BatchConsumer, batchSize int) {
 			flush_battle = true
 
 		case <-c.is_flush:
+			fmt.Println("flush")
 			flush_event = true
 			flush_login = true
 			flush_battle = true
@@ -289,7 +246,9 @@ func DealMsg(c *BatchConsumer, batchSize int) {
 					buffer_event = buffer_event[:0]
 				}
 			}
-			flush_event = false
+			if flush_event == true {
+				flush_event = false
+			}
 		}
 
 		// buf满了, 或者flush_event = true 都要发送
@@ -307,7 +266,9 @@ func DealMsg(c *BatchConsumer, batchSize int) {
 					buffer_login = buffer_login[:0]
 				}
 			}
-			flush_login = false
+			if flush_event == true {
+				flush_event = false
+			}
 		}
 
 		// buf满了, 或者flush_event = true 都要发送
@@ -325,13 +286,13 @@ func DealMsg(c *BatchConsumer, batchSize int) {
 					buffer_battle = buffer_battle[:0]
 				}
 			}
-			flush_battle = false
-		}
-
-		if is_stop == true {
-			break
+			if flush_event == true {
+				flush_event = false
+			}
 		}
 	}
+	close(c.msg_chan)
+	fmt.Println("over")
 }
 
 func (c *BatchConsumer) AddEvent(d *Event) error {

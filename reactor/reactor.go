@@ -2,6 +2,7 @@ package reactor
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"time"
 )
@@ -136,6 +137,11 @@ func (rtr *Reactor) GetSuperProperties() map[string]interface{} {
 
 // 对数值类型的属性做累加操作
 func (r *Reactor) EventAdd(e *Event) error {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(err)
+		}
+	}()
 	if e.UserId == "" {
 		return errors.New("user_id cann't empty")
 	}
@@ -150,6 +156,11 @@ func (r *Reactor) EventAdd(e *Event) error {
 
 // 对数值类型的属性做累加操作
 func (r *Reactor) LoginAdd(e *Login) error {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(err)
+		}
+	}()
 	if e.UserId == "" {
 		return errors.New("user_id cann't empty")
 	}
@@ -167,6 +178,11 @@ func (r *Reactor) LoginAdd(e *Login) error {
 
 // 对数值类型的属性做累加操作
 func (r *Reactor) BattleAdd(e *Battle) error {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(err)
+		}
+	}()
 	if e.UserId == "" {
 		return errors.New("user_id cann't empty")
 	}
