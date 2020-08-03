@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+var r *Reactor
+var r_once sync.Once
+
 const (
 	TRACK         = "track"
 	USER_SET      = "user_set"
@@ -43,10 +46,22 @@ type Event_Plus struct {
 	Sign  string `json:"sign"`
 }
 
+type Login_Plus struct {
+	Login
+	AppId string `json:"app_id"`
+	Sign  string `json:"sign"`
+}
+
+type Battle_Plus struct {
+	Battle
+	AppId string `json:"app_id"`
+	Sign  string `json:"sign"`
+}
+
 // 登录
+//is_new o: old user, 1:new user
 type Login struct {
 	DataTime    string `json:"data_time"`
-	AppId       string `json:"app_id,omitempty"`
 	ChannelId   string `json:"channel_id"`
 	ShareUid    string `json:"share_uid"`
 	UserId      string `json:"user_id"`
@@ -60,13 +75,11 @@ type Login struct {
 	DeviceModel string `json:"device_model"`
 	IsNew       string `json:"is_new"`
 	Platform    string `json:"platform"`
-	Sign        string `json:"sign"`
 }
 
 // 登录
 type Battle struct {
 	DataTime     string `json:"data_time"`
-	AppId        string `json:"app_id,omitempty"`
 	UserId       string `json:"user_id"`
 	DeviceId     string `json:"device_id"`
 	BattleId     string `json:"battle_id"`
@@ -79,7 +92,6 @@ type Battle struct {
 	CurrentScore string `json:"current_score"`
 	PlayTime     string `json:"play_time"`
 	Platform     string `json:"platform"`
-	Sign         string `json:"sign"`
 }
 
 // Consumer 为数据实现 IO 操作（写入磁盘或者发送到接收端）
@@ -87,8 +99,8 @@ type Consumer interface {
 	AddEvent(event *Event) error
 	AddLogin(login *Login) error
 	AddBattle(battle *Battle) error
-	Flush() error
 	Close() error
+	Flush() error
 }
 
 type Reactor struct {
@@ -98,10 +110,19 @@ type Reactor struct {
 }
 
 // 初始化 TDAnalytics
-func New(c Consumer) *Reactor {
-	return &Reactor{consumer: c,
-		superProperties: make(map[string]interface{}),
-		mutex:           new(sync.RWMutex)}
+func New(c Consumer) {
+	r_once.Do(func() {
+		r = &Reactor{consumer: c,
+			superProperties: make(map[string]interface{}),
+			mutex:           new(sync.RWMutex)}
+	})
+}
+
+func GetReactor() (*Reactor, error) {
+	if r != nil {
+		return r, nil
+	}
+	return nil, errors.New("seems no init")
 }
 
 // 返回公共事件属性
@@ -160,7 +181,7 @@ func (rct *Reactor) Flush() {
 	rct.consumer.Flush()
 }
 
-// 关闭 TDAnalytics
+//关闭 Reactor
 func (rct *Reactor) Close() {
 	rct.consumer.Close()
 }
