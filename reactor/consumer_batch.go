@@ -26,6 +26,7 @@ const (
 	TIKER_TIME                   = 10
 	ERR_CHANNEL_SIZE             = 2000 // 数据缓冲区大小, 超过此值时会阻塞
 	ERR_CHANNEL_THRESHOLD_SIZE   = 1000 // 超过这个阈值, 内存的数据就丢弃掉, 防止内存过大影响主业务
+	Concurrent_send              = 5
 )
 const (
 	ENV_TEST ENV = 0
@@ -61,6 +62,7 @@ type BatchConsumer struct {
 type Msg struct {
 	Content []byte
 	Path    string
+	Count   int
 }
 
 func NewBatchConsumerWithBatchSize(conf *Conf, env ENV) (Consumer, chan string, error) {
@@ -126,28 +128,42 @@ func (c *BatchConsumer) SendMsg() {
 		fmt.Println("event deal done")
 		c.wg.Done()
 	}()
-	mp := make(map[string]int)
-	mp["statistic/event"] = 0
-	mp["statistic/login"] = 0
-	mp["statistic/battle"] = 0
-
-	for {
-		rec, ok := <-c.msg_chan
-		if ok == true {
-			err := c.send(rec.Path, string(rec.Content))
-
-			mp[rec.Path]++
-			if mp[rec.Path]%100 == 0 {
-				c.err_chan <- "发送了" + rec.Path + " " + strconv.Itoa(mp[rec.Path])
+	mp := make(map[string][]int)
+	mp["statistic/event"] = make([]int, 2)
+	mp["statistic/login"] = make([]int, 2)
+	mp["statistic/battle"] = make([]int, 2)
+	ch := make(chan struct{}, 10)
+	for i := 0; i < Concurrent_send; i++ {
+		go func(i int) {
+			for {
+				rec, ok := <-c.msg_chan
+				if ok == true {
+					err := c.send(rec.Path, string(rec.Content))
+					if rec.Count != 10 {
+						fmt.Println("rec.Count:", rec.Count)
+					}
+					mp[rec.Path][0]++
+					mp[rec.Path][1] = mp[rec.Path][1] + rec.Count
+					if mp[rec.Path][0]%100 == 0 {
+						c.err_chan <- "发送了" + rec.Path + " " + strconv.Itoa(mp[rec.Path][0])
+					}
+					if err != nil {
+						c.re_msg_chan <- rec
+					}
+				} else {
+					fmt.Println(i, "------")
+					break
+				}
 			}
-			if err != nil {
-				c.re_msg_chan <- rec
-			}
-		} else {
-			close(c.re_msg_chan)
-			break
-		}
+			fmt.Println(i, "======")
+			ch <- struct{}{}
+		}(i)
 	}
+	close(c.re_msg_chan)
+	for i := 0; i < Concurrent_send; i++ {
+		<-ch
+	}
+	fmt.Println("mp:", mp)
 }
 
 func (c *BatchConsumer) ReSendMsg() {
@@ -155,16 +171,25 @@ func (c *BatchConsumer) ReSendMsg() {
 		fmt.Println("event deal done")
 		c.wg.Done()
 	}()
-	for {
-		rec, ok := <-c.re_msg_chan
-		if ok == true {
-			err := c.send(rec.Path, string(rec.Content))
-			if err != nil {
-				c.err_chan <- err.Error() + "_content: " + string(rec.Content)
+	ch := make(chan struct{}, 10)
+	for i := 0; i < Concurrent_send; i++ {
+		go func() {
+			for {
+				rec, ok := <-c.re_msg_chan
+				if ok == true {
+					err := c.send(rec.Path, string(rec.Content))
+					if err != nil {
+						c.err_chan <- err.Error() + "_content: " + string(rec.Content)
+					}
+				} else {
+					break
+				}
 			}
-		} else {
-			break
-		}
+			ch <- struct{}{}
+		}()
+	}
+	for i := 0; i < Concurrent_send; i++ {
+		<-ch
 	}
 }
 
@@ -180,110 +205,60 @@ func (c *BatchConsumer) ReceiveErrMsg(msg string) {
 
 func DealMsg(c *BatchConsumer, batchSize int) {
 	defer func() {
-		fmt.Println("event deal done")
+		fmt.Println("event deal done1")
 		c.wg.Done()
 	}()
 	buffer_event := make([]*Event_Plus, 0, batchSize+10)
 	buffer_login := make([]*Login_Plus, 0, batchSize+10)
 	buffer_battle := make([]*Battle_Plus, 0, batchSize+10)
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+	go DealEvent(c, buffer_event, c.event_ch, batchSize, "statistic/event", &wg)
+	go DealLogin(c, buffer_login, c.login_ch, batchSize, "statistic/login", &wg)
+	go DealBattle(c, buffer_battle, c.battle_ch, batchSize, "statistic/battle", &wg)
+	wg.Wait()
+	close(c.msg_chan)
+	fmt.Println("over")
+}
+
+func DealEvent(c *BatchConsumer, buf []*Event_Plus, ch chan *Event_Plus, batchSize int, path string, wg *sync.WaitGroup) {
+	defer wg.Done()
 	tiker := time.NewTicker(time.Second * time.Duration(TIKER_TIME))
 Loop:
 	for {
-		flush_event := false  // 是否发送
-		flush_login := false  // 是否发送
-		flush_battle := false // 是否发送
+		flush_event := false // 是否发送
 		select {
-		case rec, ok := <-c.event_ch:
+		case rec, ok := <-ch:
 			// 关闭了
 			if ok == false {
 				fmt.Println("event 已经关闭了")
 				flush_event = true
 				break Loop
 			}
-			buffer_event = append(buffer_event, rec)
-		case rec, ok := <-c.login_ch:
-			// 关闭了
-			if ok == false {
-				fmt.Println("login 已经关闭了")
-				flush_login = true
-				break Loop
-			}
-			buffer_login = append(buffer_login, rec)
-
-		case rec, ok := <-c.battle_ch:
-			// 关闭了
-			if ok == false {
-				fmt.Println("battle 已经关闭了")
-				flush_battle = true
-				break Loop
-			}
-			buffer_battle = append(buffer_battle, rec)
+			buf = append(buf, rec)
 
 		case <-tiker.C:
 			flush_event = true
-			flush_login = true
-			flush_battle = true
 
 		case <-c.is_flush:
 			fmt.Println("flush")
 			flush_event = true
-			flush_login = true
-			flush_battle = true
 		}
 
 		// buf满了, 或者flush_event = true 都要发送
-		if len(buffer_event) > batchSize || flush_event {
-			if len(buffer_event) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
-				jdata, err := json.Marshal(buffer_event)
+		if len(buf) >= batchSize || flush_event {
+			if len(buf) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
+				jdata, err := json.Marshal(buf)
 				if err != nil {
 					c.err_chan <- "json encode login msg error " + err.Error()
 				} else {
 					msg := Msg{
 						Content: jdata,
-						Path:    "statistic/event",
+						Path:    path,
+						Count:   len(buf),
 					}
 					c.PreSendMsg(&msg)
-					buffer_event = buffer_event[:0]
-				}
-			}
-			if flush_event == true {
-				flush_event = false
-			}
-		}
-
-		// buf满了, 或者flush_event = true 都要发送
-		if len(buffer_login) > batchSize || flush_login {
-			if len(buffer_login) > 0 { // flush_* = true 但是又没有数据的时候, 不发送
-				jdata, err := json.Marshal(buffer_login)
-				if err != nil {
-					c.err_chan <- "json encode login msg error " + err.Error()
-				} else {
-					msg := Msg{
-						Content: jdata,
-						Path:    "statistic/login",
-					}
-					c.PreSendMsg(&msg)
-					buffer_login = buffer_login[:0]
-				}
-			}
-			if flush_event == true {
-				flush_event = false
-			}
-		}
-
-		// buf满了, 或者flush_event = true 都要发送
-		if len(buffer_battle) > batchSize || flush_battle {
-			if len(buffer_battle) > 0 { // flush_* = true 但是又没有数据的时候, 不发送
-				jdata, err := json.Marshal(buffer_battle)
-				if err != nil {
-					c.err_chan <- "json encode login msg error " + err.Error()
-				} else {
-					msg := Msg{
-						Content: jdata,
-						Path:    "statistic/battle",
-					}
-					c.PreSendMsg(&msg)
-					buffer_battle = buffer_battle[:0]
+					buf = buf[:0]
 				}
 			}
 			if flush_event == true {
@@ -291,8 +266,139 @@ Loop:
 			}
 		}
 	}
-	close(c.msg_chan)
-	fmt.Println("over")
+	if len(buf) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
+		jdata, err := json.Marshal(buf)
+		if err != nil {
+			c.err_chan <- "json encode login msg error " + err.Error()
+		} else {
+			msg := Msg{
+				Content: jdata,
+				Path:    "statistic/event",
+			}
+			c.PreSendMsg(&msg)
+			buf = buf[:0]
+		}
+	}
+}
+
+func DealLogin(c *BatchConsumer, buf []*Login_Plus, ch chan *Login_Plus, batchSize int, path string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	tiker := time.NewTicker(time.Second * time.Duration(TIKER_TIME))
+Loop:
+	for {
+		flush_event := false // 是否发送
+		select {
+		case rec, ok := <-ch:
+			// 关闭了
+			if ok == false {
+				fmt.Println("login 已经关闭了")
+				flush_event = true
+				break Loop
+			}
+			buf = append(buf, rec)
+
+		case <-tiker.C:
+			flush_event = true
+
+		case <-c.is_flush:
+			fmt.Println("flush")
+			flush_event = true
+		}
+
+		// buf满了, 或者flush_event = true 都要发送
+		if len(buf) >= batchSize || flush_event {
+			if len(buf) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
+				jdata, err := json.Marshal(buf)
+				if err != nil {
+					c.err_chan <- "json encode login msg error " + err.Error()
+				} else {
+					msg := Msg{
+						Content: jdata,
+						Path:    path,
+						Count:   len(buf),
+					}
+					c.PreSendMsg(&msg)
+					buf = buf[:0]
+				}
+			}
+			if flush_event == true {
+				flush_event = false
+			}
+		}
+	}
+	if len(buf) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
+		jdata, err := json.Marshal(buf)
+		if err != nil {
+			c.err_chan <- "json encode login msg error " + err.Error()
+		} else {
+			msg := Msg{
+				Content: jdata,
+				Path:    path,
+			}
+			c.PreSendMsg(&msg)
+			buf = buf[:0]
+		}
+	}
+}
+
+func DealBattle(c *BatchConsumer, buf []*Battle_Plus, ch chan *Battle_Plus, batchSize int, path string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	tiker := time.NewTicker(time.Second * time.Duration(TIKER_TIME))
+Loop:
+	for {
+		flush_event := false // 是否发送
+		select {
+		case rec, ok := <-ch:
+			// 关闭了
+			if ok == false {
+				fmt.Println("battle 已经关闭了")
+				flush_event = true
+				break Loop
+			}
+			buf = append(buf, rec)
+
+		case <-tiker.C:
+			flush_event = true
+
+		case <-c.is_flush:
+			fmt.Println("flush")
+			flush_event = true
+		}
+
+		// buf满了, 或者flush_event = true 都要发送
+		if len(buf) >= batchSize || flush_event {
+			if len(buf) > 0 { // flush_event = true 但是又没有数据的时候, 不发送
+				jdata, err := json.Marshal(buf)
+				if err != nil {
+					c.err_chan <- "json encode login msg error " + err.Error()
+				} else {
+					msg := Msg{
+						Content: jdata,
+						Path:    path,
+						Count:   len(buf),
+					}
+					c.PreSendMsg(&msg)
+					buf = buf[:0]
+				}
+			}
+			if flush_event == true {
+				flush_event = false
+			}
+		}
+	}
+	if len(buf) > 0 { // flush_* = true 但是又没有数据的时候, 不发送
+		jdata, err := json.Marshal(buf)
+		if err != nil {
+			c.err_chan <- "json encode login msg error " + err.Error()
+		} else {
+			msg := Msg{
+				Content: jdata,
+				Path:    path,
+			}
+			c.PreSendMsg(&msg)
+			buf = buf[:0]
+		}
+	}
 }
 
 func (c *BatchConsumer) AddEvent(d *Event) error {

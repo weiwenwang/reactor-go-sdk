@@ -39,13 +39,13 @@ func main() {
 	// 开一个routine处理错误
 	go DealErrChan(err_chan)
 	reactor.New(consumer)
-	r, err := reactor.GetReactor()
 
+	r, err := reactor.GetReactor()
 	if err != nil {
 		log.Println(err.Error())
 	}
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 		time.Sleep(10 * time.Millisecond)
 		err := r.EventAdd(&reactor.Event{UserId: "123", EventId: "wang_test"})
 		if err != nil {
@@ -64,6 +64,5 @@ func main() {
 	}
 	r.Flush() // 这个是把当前的数据全部都发送
 
-	// 在close之前请
 	r.Close() // close里面会调用一次flush, 您可以不需要单独调用flush
 }
