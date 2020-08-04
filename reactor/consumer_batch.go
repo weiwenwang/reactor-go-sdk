@@ -125,7 +125,7 @@ func (c *BatchConsumer) PreSendMsg(msg *Msg) {
 
 func (c *BatchConsumer) SendMsg() {
 	defer func() {
-		fmt.Println("event deal done")
+		fmt.Println("event deal done sendmsg")
 		c.wg.Done()
 	}()
 	mp := make(map[string][]int)
@@ -159,16 +159,16 @@ func (c *BatchConsumer) SendMsg() {
 			ch <- struct{}{}
 		}(i)
 	}
-	close(c.re_msg_chan)
 	for i := 0; i < Concurrent_send; i++ {
 		<-ch
 	}
+	close(c.re_msg_chan)
 	fmt.Println("mp:", mp)
 }
 
 func (c *BatchConsumer) ReSendMsg() {
 	defer func() {
-		fmt.Println("event deal done")
+		fmt.Println("event deal done resendmsg")
 		c.wg.Done()
 	}()
 	ch := make(chan struct{}, 10)
@@ -190,6 +190,7 @@ func (c *BatchConsumer) ReSendMsg() {
 	}
 	for i := 0; i < Concurrent_send; i++ {
 		<-ch
+		fmt.Println("-k")
 	}
 }
 
@@ -205,7 +206,7 @@ func (c *BatchConsumer) ReceiveErrMsg(msg string) {
 
 func DealMsg(c *BatchConsumer, batchSize int) {
 	defer func() {
-		fmt.Println("event deal done1")
+		fmt.Println("event deal done dealmsg")
 		c.wg.Done()
 	}()
 	buffer_event := make([]*Event_Plus, 0, batchSize+10)

@@ -110,7 +110,7 @@ type Reactor struct {
 	mutex           *sync.RWMutex
 }
 
-// 初始化 TDAnalytics
+// 初始化 Reactor
 func New(c Consumer) {
 	r_once.Do(func() {
 		r = &Reactor{consumer: c,
