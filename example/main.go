@@ -47,19 +47,27 @@ func main() {
 
 	for i := 0; i < 1000; i++ {
 		time.Sleep(10 * time.Millisecond)
-		err := r.EventAdd(&reactor.Event{UserId: "123", EventId: "wang_test"})
+		var err error
+		// 如果您不赋值DataTime字段,sdk会自动去当前时间
+		err = r.EventAdd(&reactor.Event{UserId: "123", EventId: "wang_test", DataTime: time.Now().Format("2006-01-02 15:04:05")})
 		if err != nil {
 			log.Println("event add:", err.Error())
 		}
 
-		err2 := r.LoginAdd(&reactor.Login{UserId: "123", ChannelId: "channel1", IsNew: "1"})
-		if err2 != nil {
-			log.Println("login add:", err2.Error())
+		// 库存事件, 有几个特殊事件定义了常量
+		err = r.EventAdd(&reactor.Event{UserId: "123", EventId: reactor.INVENTORY})
+		if err != nil {
+			log.Println("event add:", err.Error())
 		}
 
-		err3 := r.BattleAdd(&reactor.Battle{UserId: "123", BattleId: "123"})
-		if err3 != nil {
-			log.Println("battle add:", err3.Error())
+		err = r.LoginAdd(&reactor.Login{UserId: "123", ChannelId: "channel1", IsNew: "1"})
+		if err != nil {
+			log.Println("login add:", err.Error())
+		}
+
+		err = r.BattleAdd(&reactor.Battle{UserId: "123", BattleId: "123"})
+		if err != nil {
+			log.Println("battle add:", err.Error())
 		}
 	}
 	r.Flush() // 这个是把当前的数据全部都发送

@@ -11,16 +11,12 @@ var r *Reactor
 var r_once sync.Once
 
 const (
-	TRACK         = "track"
-	USER_SET      = "user_set"
-	USER_UNSET    = "user_unset"
-	USER_SET_ONCE = "user_setOnce"
-	USER_ADD      = "user_add"
-	USER_APPEND   = "user_append"
-	USER_DEL      = "user_del"
-
-	SDK_VERSION = "1.1.0"
-	LIB_NAME    = "Golang"
+	INVENTORY = "inventory_events" // 库存事件
+	CONSUME   = "consume_events"   // 充值成功事件
+	SHARE     = "share_events"     // 分享事件
+	VIDEO     = "video_events"     // 视频事件
+	RESOURCE  = "resource_events"  // 货币产销事件
+	NEW       = "new_events"       // 新手引导事件
 )
 
 // 自定义事件
