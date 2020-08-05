@@ -25,7 +25,7 @@ func main() {
 	// 区别正式环境和测试环境就是通过域名
 	conf := reactor.Conf{
 		App_id:     "1109861474",
-		Secret_id:  "955e76838210f9427acc6a4bc88b1a22",
+		Secret_id:  "955e76838210f9427acc6a4bcxxxxxx",
 		Batch_size: 10,
 		Test_url:   "https://reactor-test.xingye.work",
 		Prod_url:   "https://reactor.xingye.work",
