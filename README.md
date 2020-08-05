@@ -5,6 +5,7 @@ go get github.com/weiwenwang/reactor-sdk-go
 
 ```goland
 
+
 func DealErrChan(err_chan <-chan string) {
 	count := 0
 	for {
@@ -43,17 +44,13 @@ func main() {
 		log.Println(err.Error())
 	}
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10; i++ {
 		time.Sleep(10 * time.Millisecond)
 		var err error
-		// 如果您不赋值DataTime字段,sdk会自动去当前时间
-		err = r.EventAdd(&reactor.Event{UserId: "123", EventId: "wang_test", DataTime: time.Now().Format("2006-01-02 15:04:05")})
-		if err != nil {
-			log.Println("event add:", err.Error())
-		}
-
-		// 库存事件, 有几个特殊事件定义了常量
-		err = r.EventAdd(&reactor.Event{UserId: "123", EventId: reactor.INVENTORY})
+		// eg: 库存事件, 如果您不赋值DataTime字段,sdk会自动去当前时间
+		inventory := reactor.InventoryEvent{UserId: "100", CoinCount: 1, DiamondCount: 2,
+			LiquanCount: 3, JipaiqiCount: 4, KandipaiCount: 5, CansaiquanCount: 6, OtherProp1: 7, OtherProp2: 8, Params: "par"}
+		err = r.EventAdd(inventory)
 		if err != nil {
 			log.Println("event add:", err.Error())
 		}
@@ -70,7 +67,7 @@ func main() {
 	}
 	r.Flush() // 这个是把当前的数据全部都发送
 
-	r.Close() // close里面会调用一次flush, 您可以不需要单独调用flush
+	r.Close() // close里面会调用一次flush, 您可以不需要单独调用flush, 这个要在整个进程退出的时候执行, 确保不再有数据发送的情况
 }
 
 

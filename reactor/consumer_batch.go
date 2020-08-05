@@ -403,16 +403,25 @@ Loop:
 }
 
 func (c *BatchConsumer) AddEvent(d *Event) error {
+	if d.DataTime == "" {
+		d.DataTime = time.Now().Format("2006-01-02 15:04:05")
+	}
 	c.event_ch <- &Event_Plus{*d, c.appId, Md5V(c.secretId + "_" + c.appId + "_" + d.DataTime)}
 	return nil
 }
 
 func (c *BatchConsumer) AddLogin(d *Login) error {
+	if d.DataTime == "" {
+		d.DataTime = time.Now().Format("2006-01-02 15:04:05")
+	}
 	c.login_ch <- &Login_Plus{*d, c.appId, Md5V(c.secretId + "_" + c.appId + "_" + d.DataTime)}
 	return nil
 }
 
 func (c *BatchConsumer) AddBattle(d *Battle) error {
+	if d.DataTime == "" {
+		d.DataTime = time.Now().Format("2006-01-02 15:04:05")
+	}
 	c.battle_ch <- &Battle_Plus{*d, c.appId, Md5V(c.secretId + "_" + c.appId + "_" + d.DataTime)}
 	return nil
 }

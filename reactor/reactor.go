@@ -3,6 +3,7 @@ package reactor
 import (
 	"errors"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -35,6 +36,23 @@ type Event struct {
 	Value6   string `json:"value6"`
 	Value7   string `json:"value7"`
 	Value8   string `json:"value8"`
+}
+
+// 自定义事件
+type InventoryEvent struct {
+	DataTime        string
+	UserId          string
+	CoinCount       int
+	DiamondCount    int
+	LiquanCount     int
+	JipaiqiCount    int
+	KandipaiCount   int
+	CansaiquanCount int
+	OtherProp1      int
+	OtherProp2      int
+	Params          string
+	Platform        string
+	DeviceId        string
 }
 
 type Event_Plus struct {
@@ -100,6 +118,11 @@ type Consumer interface {
 	Flush() error
 }
 
+type EventInterface interface {
+	Verify() error
+	TransToStandardEvent() *Event
+}
+
 type Reactor struct {
 	consumer        Consumer
 	superProperties map[string]interface{}
@@ -132,22 +155,56 @@ func (rtr *Reactor) GetSuperProperties() map[string]interface{} {
 }
 
 // 对数值类型的属性做累加操作
-func (r *Reactor) EventAdd(e *Event) error {
+func (r *Reactor) EventAdd(e EventInterface) error {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(err)
 		}
 	}()
+	err := e.Verify()
+	if err != nil {
+		return err
+	}
+	return r.consumer.AddEvent(e.TransToStandardEvent())
+}
+
+func (e Event) Verify() error {
 	if e.UserId == "" {
 		return errors.New("user_id cann't empty")
 	}
 	if e.EventId == "" {
 		return errors.New("event_id cann't empty")
 	}
+	return nil
+}
+
+func (e InventoryEvent) Verify() error {
 	if e.DataTime == "" {
 		e.DataTime = time.Now().Format("2006-01-02 15:04:05")
 	}
-	return r.consumer.AddEvent(e)
+	if e.UserId == "" {
+		return errors.New("user_id cann't empty")
+	}
+	return nil
+}
+
+func (e InventoryEvent) TransToStandardEvent() *Event {
+	var event Event
+	event.EventId = INVENTORY
+	event.Value1 = strconv.Itoa(e.CoinCount)
+	event.Value2 = strconv.Itoa(e.DiamondCount)
+	event.Value3 = strconv.Itoa(e.LiquanCount)
+	event.Value4 = strconv.Itoa(e.JipaiqiCount)
+	event.Value5 = strconv.Itoa(e.KandipaiCount)
+	event.Value6 = strconv.Itoa(e.CansaiquanCount)
+	event.Value7 = strconv.Itoa(e.OtherProp1)
+	event.Value8 = strconv.Itoa(e.OtherProp2)
+	event.Params = e.Params
+	event.UserId = e.UserId
+	event.Platform = e.Platform
+	event.DeviceId = e.DeviceId
+
+	return &event
 }
 
 // 对数值类型的属性做累加操作
@@ -189,11 +246,11 @@ func (r *Reactor) BattleAdd(e *Battle) error {
 }
 
 // 立即开始数据 IO 操作
-func (rct *Reactor) Flush() {
-	rct.consumer.Flush()
+func (r *Reactor) Flush() {
+	r.consumer.Flush()
 }
 
 //关闭 Reactor
-func (rct *Reactor) Close() {
-	rct.consumer.Close()
+func (r *Reactor) Close() {
+	r.consumer.Close()
 }
